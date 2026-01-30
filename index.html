@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Risk Regime Early Warning System</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Custom Styles for Scrollbars & Animations -->
+    <style>
+        body {
+            background-color: #020202;
+            color: white;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background-color: #262626;
+            border-radius: 20px;
+        }
+        /* Hide mix-blend cursor on mobile/touch devices */
+        @media (hover: none) {
+            .custom-cursor { display: none !important; }
+        }
+    </style>
+
+    <!-- Import Map to resolve bare module specifiers -->
+    <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@18.2.0",
+                "react-dom": "https://esm.sh/react-dom@18.2.0",
+                "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+                "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+                "recharts": "https://esm.sh/recharts@2.12.0?external=react,react-dom"
+            }
+        }
+    </script>
+    
+    <!-- Babel for in-browser compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import { 
+            Activity, AlertTriangle, BarChart3, BrainCircuit, ChevronRight, ChevronLeft,
+            FileText, LayoutDashboard, Lock, Menu, MoreHorizontal, ShieldAlert, 
+            TrendingUp, User, XCircle, ArrowDown, Zap, Eye, CheckCircle2, Radar, 
+            Binary, Siren, Flame, History, Settings, LogOut, Bell, ToggleLeft, ToggleRight 
+        } from 'lucide-react';
+        import { 
+            Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, 
+            LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, 
+            RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis 
+        } from 'recharts';
+
+        // --- Mock Data Constants ---
+
+        const CURRENT_REGIME_PROBS = [
+            { name: 'Calm', value: 0.65, color: '#22d3ee' }, 
+            { name: 'Stress', value: 0.25, color: '#fbbf24' }, 
+            { name: 'Panic', value: 0.05, color: '#f43f5e' }, 
+            { name: 'Relief', value: 0.05, color: '#818cf8' }, 
+        ];
+
+        const FORWARD_STRESS_DATA = [
+            { day: 'T+0', prob: 25 }, { day: 'T+10', prob: 32 }, { day: 'T+20', prob: 48 },
+            { day: 'T+30', prob: 55 }, { day: 'T+40', prob: 62 }, { day: 'T+50', prob: 58 },
+            { day: 'T+60', prob: 50 },
+        ];
+
+        const TIME_TO_STRESS_DIST = [
+            { range: '0-10d', value: 10 }, { range: '10-20d', value: 35 },
+            { range: '20-40d', value: 40 }, { range: '40-60d', value: 15 },
+            { range: '>60d', value: 5 },
+        ];
+
+        const VAR_COMPARISON_DATA = [
+            { metric: 'VaR (99%)', current: 1.2, stress: 3.8 },
+            { metric: 'CVaR (97.5%)', current: 1.8, stress: 5.2 },
+            { metric: 'Exp. Drawdown', current: 2.5, stress: 8.4 },
+        ];
+
+        const HEATMAP_DATA = [
+            { from: 'Calm', to: 'Calm', prob: 0.85, reason: "Inertia typically maintains low vol." },
+            { from: 'Calm', to: 'Stress', prob: 0.12, reason: "Liquidity drying up in repo markets." },
+            { from: 'Calm', to: 'Panic', prob: 0.01, reason: "Structurally disallowed jump." },
+            { from: 'Calm', to: 'Relief', prob: 0.02, reason: "Noise." },
+            { from: 'Stress', to: 'Calm', prob: 0.10, reason: "Mean reversion requires policy intervention." },
+            { from: 'Stress', to: 'Stress', prob: 0.60, reason: "Volatility clustering effect." },
+            { from: 'Stress', to: 'Panic', prob: 0.25, reason: "Escalation risk high due to leverage." },
+            { from: 'Stress', to: 'Relief', prob: 0.05, reason: "Rapid recovery unlikely." },
+        ];
+
+        // --- Utilities & Components ---
+
+        const CustomCursor = () => {
+            const cursorRef = useRef(null);
+
+            useEffect(() => {
+                const moveCursor = (e) => {
+                    if(cursorRef.current) {
+                        cursorRef.current.style.transform = `translate3d(${e.clientX - 16}px, ${e.clientY - 16}px, 0)`;
+                    }
+                }
+                
+                const handleMouseOver = (e) => {
+                    if (e.target.closest('button, a, .cursor-pointer')) {
+                        cursorRef.current?.classList.add('scale-150');
+                    } else {
+                        cursorRef.current?.classList.remove('scale-150');
+                    }
+                };
+
+                window.addEventListener('mousemove', moveCursor);
+                window.addEventListener('mouseover', handleMouseOver);
+                return () => {
+                    window.removeEventListener('mousemove', moveCursor);
+                    window.removeEventListener('mouseover', handleMouseOver);
+                };
+            }, []);
+
+            return (
+                <div 
+                    ref={cursorRef}
+                    className="custom-cursor fixed top-0 left-0 w-8 h-8 bg-white rounded-full pointer-events-none z-[9999] mix-blend-difference transition-transform duration-100 ease-out hidden md:block"
+                />
+            );
+        };
+
+        const Card = ({ children, className = "", noPadding = false }) => (
+            <div className={`bg-[#0a0a0a]/80 backdrop-blur-xl border border-white/5 rounded-lg shadow-2xl relative overflow-hidden group ${className}`}>
+                <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-0 opacity-20 pointer-events-none bg-[length:100%_4px,3px_100%]"></div>
+                <div className={`relative z-10 ${noPadding ? '' : 'p-6'}`}>{children}</div>
+                <div className="absolute inset-0 border border-white/5 group-hover:border-cyan-500/30 transition-colors duration-500 rounded-lg pointer-events-none"></div>
+            </div>
+        );
+
+        const SectionHeader = ({ title, subtitle }) => (
+            <div className="mb-8 animate-in fade-in slide-in-from-left-4 duration-500">
+                <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-3">
+                    <div className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-cyan-500"></span>
+                    </div>
+                    {title}
+                </h2>
+                {subtitle && <p className="text-sm text-neutral-500 mt-1 ml-6 font-mono border-l border-neutral-800 pl-3">{subtitle}</p>}
+            </div>
+        );
+
+        const GenAIBadge = () => (
+            <div className="flex items-center gap-2 mb-4">
+                <div className="bg-violet-500/10 text-violet-300 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 border border-violet-500/20 shadow-[0_0_15px_-3px_rgba(139,92,246,0.3)] animate-pulse">
+                    <BrainCircuit size={14} className="text-violet-400" />
+                    GenAI Neural Interpretation
+                </div>
+            </div>
+        );
+
+        const DisclaimerFooter = () => (
+            <div className="mt-4 pt-4 border-t border-white/5 text-[10px] text-neutral-600 flex items-start gap-2 font-mono">
+                <ShieldAlert size={12} className="mt-0.5 shrink-0 text-neutral-500" />
+                <p>
+                    AI-generated interpretation of probabilistic outputs. Not financial advice. 
+                    Human-in-the-loop required for decision execution.
+                </p>
+            </div>
+        );
+
+        const ProfileModal = ({ onClose, onLogout }) => {
+            const [view, setView] = useState('menu');
+
+            const MenuItem = ({ icon: Icon, label, target }) => (
+                <div 
+                    onClick={() => setView(target)}
+                    className="p-3 bg-white/5 rounded border border-white/5 flex justify-between items-center cursor-pointer hover:bg-white/10 transition-colors group"
+                >
+                    <span className="text-sm text-neutral-300 flex items-center gap-2 group-hover:text-white"><Icon size={14}/> {label}</span>
+                    <ChevronRight size={14} className="text-neutral-600 group-hover:text-cyan-500 transition-colors" />
+                </div>
+            );
+
+            const BackHeader = ({ title }) => (
+                <div className="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
+                    <button onClick={() => setView('menu')} className="text-neutral-500 hover:text-white transition-colors p-1 hover:bg-white/5 rounded">
+                        <ChevronLeft size={18} />
+                    </button>
+                    <h3 className="text-white font-bold">{title}</h3>
+                </div>
+            );
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+                    <div className="bg-[#0f0f0f] border border-white/10 rounded-xl p-6 w-96 shadow-2xl relative overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_0%,rgba(6,182,212,0.03)_100%)] pointer-events-none"></div>
+
+                        {view === 'menu' && (
+                            <div className="animate-in slide-in-from-left-4 duration-200">
+                                <div className="flex justify-between items-start mb-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 bg-neutral-800 rounded-full flex items-center justify-center border border-white/10">
+                                            <User size={24} className="text-neutral-400" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-white font-bold">Risk Committee</h3>
+                                            <p className="text-xs text-neutral-500 uppercase tracking-wider">Level 4 Clearance</p>
+                                        </div>
+                                    </div>
+                                    <button onClick={onClose} className="text-neutral-500 hover:text-white transition-colors"><XCircle size={20}/></button>
+                                </div>
+                                
+                                <div className="space-y-3 mb-6">
+                                    <MenuItem icon={Settings} label="User Preferences" target="preferences" />
+                                    <MenuItem icon={Bell} label="Alert Thresholds" target="alerts" />
+                                    <MenuItem icon={History} label="Audit History" target="history" />
+                                </div>
+                                
+                                <button 
+                                    onClick={onLogout}
+                                    className="w-full py-2.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-xs font-bold uppercase tracking-widest hover:bg-rose-500/20 flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    <LogOut size={14} /> Secure Logout
+                                </button>
+                            </div>
+                        )}
+
+                        {view === 'preferences' && (
+                            <div className="animate-in slide-in-from-right-4 duration-200">
+                                <BackHeader title="Preferences" />
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center p-2 rounded hover:bg-white/5">
+                                        <span className="text-sm text-neutral-300">Email Notifications</span>
+                                        <ToggleRight size={28} className="text-cyan-500 cursor-pointer hover:text-cyan-400" />
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 rounded hover:bg-white/5">
+                                        <span className="text-sm text-neutral-300">Compact Mode</span>
+                                        <ToggleLeft size={28} className="text-neutral-600 cursor-pointer hover:text-neutral-400" />
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 rounded hover:bg-white/5">
+                                        <span className="text-sm text-neutral-300">Beta Features</span>
+                                        <ToggleRight size={28} className="text-cyan-500 cursor-pointer hover:text-cyan-400" />
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 rounded hover:bg-white/5">
+                                        <span className="text-sm text-neutral-300">Sound Effects</span>
+                                        <ToggleRight size={28} className="text-cyan-500 cursor-pointer hover:text-cyan-400" />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'alerts' && (
+                            <div className="animate-in slide-in-from-right-4 duration-200">
+                                <BackHeader title="Alert Thresholds" />
+                                <div className="space-y-6">
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between">
+                                            <label className="text-xs text-neutral-500 uppercase font-bold">VaR Limit (99%)</label>
+                                            <span className="text-xs font-mono text-cyan-400">2.5%</span>
+                                        </div>
+                                        <input type="range" className="w-full accent-cyan-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer" />
+                                    </div>
+                                    
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between">
+                                            <label className="text-xs text-neutral-500 uppercase font-bold">Stress Probability Trigger</label>
+                                            <span className="text-xs font-mono text-rose-400">40%</span>
+                                        </div>
+                                        <input type="range" className="w-full accent-rose-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer" defaultValue="40" />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between">
+                                            <label className="text-xs text-neutral-500 uppercase font-bold">Volatility Persistence (Days)</label>
+                                            <span className="text-xs font-mono text-neutral-400">10d</span>
+                                        </div>
+                                        <input type="range" className="w-full accent-violet-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer" defaultValue="10" max="30" />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'history' && (
+                            <div className="animate-in slide-in-from-right-4 duration-200">
+                                <BackHeader title="Audit History" />
+                                <div className="space-y-1 overflow-y-auto max-h-60 pr-2 scrollbar-thin scrollbar-thumb-white/10">
+                                    {[
+                                        { action: "Login", time: "Today, 08:30 AM", type: "auth" },
+                                        { action: "Updated Risk Limits", time: "Yesterday, 04:15 PM", type: "edit" },
+                                        { action: "Exported Q3 Report", time: "Oct 24, 02:00 PM", type: "export" },
+                                        { action: "Failed Login Attempt", time: "Oct 20, 11:23 AM", type: "alert" },
+                                        { action: "System Update v4.1", time: "Oct 15, 09:00 AM", type: "system" },
+                                    ].map((item, i) => (
+                                        <div key={i} className="flex justify-between items-center p-3 rounded hover:bg-white/5 transition-colors border-b border-white/5 last:border-0">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-1.5 h-1.5 rounded-full ${item.type === 'alert' ? 'bg-rose-500' : 'bg-cyan-500'}`}></div>
+                                                <span className="text-sm text-neutral-300">{item.action}</span>
+                                            </div>
+                                            <span className="text-[10px] text-neutral-500 font-mono">{item.time}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Landing Page ---
+
+        const LandingPage = ({ onEnter }) => {
+            return (
+                <div className="bg-[#020202] text-white font-sans overflow-x-hidden selection:bg-cyan-500/30 relative">
+                    <CustomCursor />
+                    <div className="fixed inset-0 pointer-events-none z-0">
+                        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-30 animate-pulse"></div>
+                    </div>
+
+                    {/* 1. Hero: The Event Horizon */}
+                    <section className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden">
+                        <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]"></div>
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60vw] h-[60vw] bg-cyan-600/5 rounded-full blur-[120px]"></div>
+
+                        <div className="z-10 text-center px-4 max-w-6xl mx-auto space-y-12">
+                            <div className="inline-flex items-center gap-3 px-6 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-xl animate-in fade-in slide-in-from-top-10 duration-1000">
+                                <span className="relative flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
+                                <span className="text-xs font-mono text-neutral-300 uppercase tracking-[0.3em]">System Online: v4.2.0</span>
+                            </div>
+                            
+                            <h1 className="text-7xl md:text-9xl font-black tracking-tighter text-white animate-in fade-in zoom-in-50 duration-1000 delay-100 drop-shadow-2xl">
+                                RISK<span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-violet-500">SENTRY</span>
+                            </h1>
+                            
+                            <p className="text-xl md:text-3xl text-neutral-400 max-w-4xl mx-auto leading-relaxed font-light animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-300">
+                                The market has no memory. <br/>
+                                <span className="text-white font-medium">We do.</span>
+                            </p>
+                            
+                            <div className="flex flex-col md:flex-row gap-6 justify-center pt-8 animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-500">
+                                <button 
+                                    onClick={onEnter}
+                                    className="group relative px-8 py-4 bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-widest text-sm transition-all hover:scale-105 hover:shadow-[0_0_40px_-10px_rgba(34,211,238,0.7)] cursor-pointer"
+                                >
+                                    Initialize Dashboard
+                                    <div className="absolute inset-0 border-2 border-white/20 group-hover:border-white/40 pointer-events-none"></div>
+                                </button>
+                                <button className="px-8 py-4 bg-transparent border border-white/20 text-white font-bold uppercase tracking-widest text-sm hover:bg-white/5 transition-all cursor-pointer">
+                                    Read Methodology
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 animate-bounce opacity-50">
+                            <span className="text-[10px] uppercase tracking-widest">Scroll to Breach</span>
+                            <ArrowDown size={14} />
+                        </div>
+                    </section>
+
+                    {/* 2. The Blind Spot (Sticky Scroll) */}
+                    <section className="h-[200vh] relative bg-black">
+                        <div className="sticky top-0 h-screen flex items-center overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-b from-black via-[#050505] to-black"></div>
+                            
+                            <div className="max-w-7xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-16 px-8 items-center relative z-10">
+                                <div className="space-y-10">
+                                    <h2 className="text-6xl font-bold text-white leading-[0.9]">
+                                        Price is <br/> <span className="text-neutral-700">Noise.</span> <br/>
+                                        Regime is <span className="text-rose-500">Signal.</span>
+                                    </h2>
+                                    <p className="text-xl text-neutral-400 leading-relaxed border-l-4 border-rose-500 pl-6">
+                                        Standard models assume continuity. They fail because they calculate risk <em>inside</em> the current regime.
+                                        <br/><br/>
+                                        RiskSentry calculates the probability of the <strong>regime itself breaking</strong>.
+                                    </p>
+                                </div>
+
+                                <div className="relative group">
+                                    <div className="absolute -inset-1 bg-gradient-to-r from-rose-500 to-violet-500 rounded-lg blur opacity-25 group-hover:opacity-75 transition duration-1000 group-hover:duration-200"></div>
+                                    <div className="relative h-[400px] bg-black border border-white/10 rounded-lg p-6 flex flex-col items-center justify-center overflow-hidden">
+                                        <div className="flex items-end gap-1 h-32 w-full mb-8 opacity-50">
+                                            {[...Array(20)].map((_, i) => (
+                                                <div key={i} className="flex-1 bg-neutral-800 animate-pulse" style={{ height: `${Math.random() * 100}%`, animationDelay: `${i * 100}ms` }}></div>
+                                            ))}
+                                        </div>
+                                        <div className="w-full bg-neutral-900 h-px mb-8 relative">
+                                            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded font-mono uppercase">Shift Detected</div>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-4xl font-mono text-white font-bold">T+14 Days</p>
+                                            <p className="text-xs text-neutral-500 uppercase tracking-widest mt-2">Predicted Stress Entry</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* 3. The Architecture (Restored) */}
+                    <section className="py-32 bg-[#050505] relative border-t border-white/5">
+                        <div className="max-w-7xl mx-auto px-8">
+                            <div className="text-center mb-24">
+                                <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">The Architecture of Insight</h2>
+                                <div className="h-1 w-20 bg-gradient-to-r from-cyan-500 to-violet-500 mx-auto rounded-full"></div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                                <div className="group relative bg-neutral-900/20 p-1 rounded-2xl overflow-hidden transition-all duration-300 hover:bg-neutral-900/40 border border-white/5 hover:border-cyan-500/30">
+                                    <div className="relative p-8 h-full flex flex-col">
+                                        <div className="w-12 h-12 bg-cyan-950 rounded-lg flex items-center justify-center mb-6 border border-cyan-500/30 text-cyan-400 group-hover:scale-110 transition-transform">
+                                            <Binary size={24} />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-white mb-3">Bayesian Core</h3>
+                                        <p className="text-neutral-400 text-sm leading-relaxed">
+                                            Hidden Markov Models ingest 50+ macro signals to calculate real-time regime probability distributions. Pure math. No hallucinations.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="group relative bg-neutral-900/20 p-1 rounded-2xl overflow-hidden transition-all duration-300 hover:bg-neutral-900/40 border border-white/5 hover:border-violet-500/30">
+                                    <div className="relative p-8 h-full flex flex-col">
+                                        <div className="w-12 h-12 bg-violet-950 rounded-lg flex items-center justify-center mb-6 border border-violet-500/30 text-violet-400 group-hover:scale-110 transition-transform">
+                                            <BrainCircuit size={24} />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-white mb-3">Semantic Layer</h3>
+                                        <p className="text-neutral-400 text-sm leading-relaxed">
+                                            LLMs act as the interpreter. They translate complex probability vectors into board-ready risk narratives and actionable explanations.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="group relative bg-neutral-900/20 p-1 rounded-2xl overflow-hidden transition-all duration-300 hover:bg-neutral-900/40 border border-white/5 hover:border-rose-500/30">
+                                    <div className="relative p-8 h-full flex flex-col">
+                                        <div className="w-12 h-12 bg-rose-950 rounded-lg flex items-center justify-center mb-6 border border-rose-500/30 text-rose-400 group-hover:scale-110 transition-transform">
+                                            <ShieldAlert size={24} />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-white mb-3">Governance</h3>
+                                        <p className="text-neutral-400 text-sm leading-relaxed">
+                                            Built for the CRO. Immutable audit logs, strict separation of concerns, and regulator-ready output formats.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* 4. Comparison Table (New) */}
+                    <section className="py-32 bg-black relative border-t border-white/5">
+                        <div className="max-w-5xl mx-auto px-8">
+                            <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl overflow-hidden">
+                                <div className="grid grid-cols-3 p-6 border-b border-white/10 bg-white/5">
+                                    <div className="text-xs font-bold uppercase tracking-widest text-neutral-500">Feature</div>
+                                    <div className="text-xs font-bold uppercase tracking-widest text-neutral-500 text-center">Traditional VaR</div>
+                                    <div className="text-xs font-bold uppercase tracking-widest text-cyan-500 text-center">RiskSentry</div>
+                                </div>
+                                {[
+                                    { f: 'Lookback Window', t: 'Trailing 2-Year (Static)', r: 'Dynamic Regime Conditioning' },
+                                    { f: 'Crash Prediction', t: 'Reacts after +3SD move', r: 'Predicts T-10 days pre-move' },
+                                    { f: 'Output', t: 'Numerical Table', r: 'Probabilities + Narratives' },
+                                    { f: 'Interpretability', t: 'Black Box', r: 'Natural Language Reasoning' }
+                                ].map((row, i) => (
+                                    <div key={i} className="grid grid-cols-3 p-6 border-b border-white/5 hover:bg-white/5 transition-colors">
+                                        <div className="font-mono text-sm text-neutral-300">{row.f}</div>
+                                        <div className="text-center text-sm text-neutral-500">{row.t}</div>
+                                        <div className="text-center text-sm text-white font-bold">{row.r}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* 5. Final CTA */}
+                    <section className="h-[80vh] flex items-center justify-center bg-[#050505] relative overflow-hidden">
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_#0c4a6e_0%,_#000000_70%)] opacity-30"></div>
+                        <div className="z-10 text-center px-6">
+                            <h2 className="text-5xl md:text-7xl font-bold text-white mb-8 tracking-tighter">
+                                Ready to See <br/> The <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-violet-500">Unseen?</span>
+                            </h2>
+                            <button 
+                                onClick={onEnter}
+                                className="group relative inline-flex items-center justify-center px-10 py-5 text-lg font-bold text-white bg-white/5 border border-white/10 rounded-none hover:bg-white/10 transition-all duration-300 backdrop-blur-md overflow-hidden cursor-pointer"
+                            >
+                                <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-cyan-500/20 to-violet-500/20 opacity-0 group-hover:opacity-100 transition-opacity"></span>
+                                <span className="relative z-10 flex items-center gap-3 tracking-widest font-mono uppercase">
+                                    Initialize Prototype
+                                    <ChevronRight size={18} className="text-cyan-400 group-hover:translate-x-2 transition-transform" />
+                                </span>
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            );
+        };
+
+        // --- Views ---
+
+        const EarlyWarningView = () => {
+            return (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <SectionHeader 
+                        title="Early Warning Signals" 
+                        subtitle="AI-Interpreted Pre-Crisis Indicators & Escalation Probabilities"
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <Card className="flex flex-col items-center justify-center p-8 border-t-4 border-t-amber-500">
+                            <div className="relative w-40 h-40 flex items-center justify-center mb-6">
+                                <svg className="w-full h-full transform -rotate-90">
+                                    <circle cx="80" cy="80" r="70" stroke="#262626" strokeWidth="12" fill="transparent" />
+                                    <circle cx="80" cy="80" r="70" stroke="#fbbf24" strokeWidth="12" fill="transparent" strokeDasharray="440" strokeDashoffset={440 - (440 * 0.48)} className="transition-all duration-1000 ease-out" />
+                                </svg>
+                                <div className="absolute text-center">
+                                    <span className="text-4xl font-bold text-white">48%</span>
+                                    <p className="text-[10px] text-neutral-500 uppercase tracking-widest mt-1">Stress Prob</p>
+                                </div>
+                            </div>
+                            <div className="text-center">
+                                <h3 className="text-lg font-bold text-white mb-2">Transition Risk (20d)</h3>
+                                <p className="text-xs text-neutral-400">Probability of entering 'Stress' regime within 20 trading days.</p>
+                            </div>
+                        </Card>
+
+                        <Card className="flex flex-col items-center justify-center p-8 border-t-4 border-t-rose-500">
+                            <div className="relative w-40 h-40 flex items-center justify-center mb-6">
+                                <div className="absolute inset-0 bg-rose-500/20 rounded-full blur-xl animate-pulse"></div>
+                                <Siren size={64} className="text-rose-500 relative z-10" />
+                            </div>
+                            <div className="text-center">
+                                <div className="flex items-center justify-center gap-2 mb-2">
+                                    <h3 className="text-lg font-bold text-white">High Escalation</h3>
+                                    <span className="bg-rose-500/20 text-rose-400 text-[10px] px-2 py-0.5 rounded border border-rose-500/30 uppercase font-bold">Alert</span>
+                                </div>
+                                <p className="text-xs text-neutral-400">
+                                    If Stress occurs, there is a <span className="text-rose-400 font-bold">25%</span> probability it escalates to 'Panic' (2008-style liquidity freeze).
+                                </p>
+                            </div>
+                        </Card>
+
+                        <Card className="flex flex-col items-center justify-center p-8 border-t-4 border-t-cyan-500">
+                            <div className="w-full h-40 mb-6 relative">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={[{name: '2008', val: 85}, {name: '2020', val: 65}, {name: '2000', val: 40}]}>
+                                        <XAxis dataKey="name" hide />
+                                        <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
+                                        <Bar dataKey="val" fill="#22d3ee" radius={[4,4,0,0]} barSize={40} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                                <div className="absolute bottom-0 w-full text-center text-[10px] text-neutral-500 uppercase tracking-widest">Regime Similarity Score</div>
+                            </div>
+                            <div className="text-center">
+                                <h3 className="text-lg font-bold text-white mb-2">85% Match: 2008</h3>
+                                <p className="text-xs text-neutral-400">Current liquidity & volatility surface structure highly correlates with Pre-Lehman crash.</p>
+                            </div>
+                        </Card>
+                    </div>
+
+                    <Card className="p-8 border-l-2 border-l-violet-500">
+                        <GenAIBadge />
+                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                            <div className="lg:col-span-3 space-y-4">
+                                <h3 className="text-xl font-bold text-white">Why is the alarm ringing?</h3>
+                                <p className="text-neutral-300 leading-relaxed font-light">
+                                    "The system has detected a decoupling between <strong>Equity Prices</strong> (hitting highs) and <strong>Repo Market Liquidity</strong> (drying up). This specific divergence historically precedes 'Stress' regimes by 15-25 days. The <strong>Escalation Risk</strong> is flagged as 'High' because leverage in the shadow banking system is estimated to be 2.4x higher than normal, reducing the system's ability to absorb a shock without forced selling."
+                                </p>
+                            </div>
+                            <div className="lg:col-span-1 border-l border-white/10 pl-6 flex flex-col justify-center space-y-4">
+                                <div>
+                                    <span className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Confidence Score</span>
+                                    <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden">
+                                        <div className="bg-cyan-500 w-[92%] h-full"></div>
+                                    </div>
+                                    <span className="text-xs text-cyan-400 font-mono mt-1 block">92.4%</span>
+                                </div>
+                                <div>
+                                    <span className="text-[10px] text-neutral-500 uppercase tracking-widest block mb-1">Data Depth</span>
+                                    <span className="text-xs text-white font-mono">14,020 Macro Signals Processed</span>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+            );
+        };
+
+        const DashboardView = () => {
+            return (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <SectionHeader 
+                        title="Executive Overview" 
+                        subtitle="Real-time Bayesian Regime Probabilities & Transition Risk"
+                    />
+
+                    <div className="grid grid-cols-12 gap-6">
+                        <Card className="col-span-12 lg:col-span-7">
+                            <div className="flex justify-between items-center mb-8">
+                                <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-widest flex items-center gap-2">
+                                    <Activity size={14} /> Current Regime (T+0)
+                                </h3>
+                                <span className="text-[10px] text-cyan-500 font-mono border border-cyan-900/50 bg-cyan-950/30 px-2 py-1 rounded shadow-[0_0_10px_rgba(34,211,238,0.2)]">Model: Bayesian HMM v4.2</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-4 mb-8">
+                                {CURRENT_REGIME_PROBS.map((regime) => (
+                                    <div key={regime.name} className="relative flex flex-col items-center p-4 bg-white/5 rounded border border-white/5 hover:border-white/10 transition-all group overflow-hidden">
+                                        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                        <span className="text-neutral-500 text-xs mb-3 font-medium uppercase tracking-wider relative z-10">{regime.name}</span>
+                                        <span className="text-3xl font-bold font-mono group-hover:scale-110 transition-transform duration-300 relative z-10" style={{ color: regime.color }}>
+                                            {(regime.value * 100).toFixed(0)}%
+                                        </span>
+                                        {/* Micro bar */}
+                                        <div className="absolute bottom-0 left-0 h-1 bg-current opacity-50 w-full" style={{color: regime.color}}></div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="h-2 w-full flex rounded-full overflow-hidden bg-neutral-800 relative">
+                                {CURRENT_REGIME_PROBS.map((regime) => (
+                                    <div 
+                                        key={regime.name}
+                                        style={{ width: `${regime.value * 100}%`, backgroundColor: regime.color, boxShadow: `0 0 15px ${regime.color}80` }}
+                                        className="h-full relative z-10"
+                                    />
+                                ))}
+                            </div>
+                        </Card>
+
+                        <Card className="col-span-12 lg:col-span-5 border-l-2 border-l-violet-500 bg-gradient-to-br from-[#0a0a0a] to-violet-950/20">
+                            <GenAIBadge />
+                            <h3 className="text-lg font-bold text-white mb-3 tracking-tight">Narrative Summary</h3>
+                            <p className="text-neutral-300 leading-relaxed text-sm mb-6 font-light">
+                                "Based on current macro conditions (tightening liquidity in repo markets) and historical analogues, the probability of entering a <span className="text-amber-400 font-bold border-b border-amber-500/50">Stress</span> regime within 20 days has increased to 48%. Similar transition patterns were observed prior to the Q4 2018 volatility spike."
+                            </p>
+                            <div className="flex flex-col gap-3 mt-4 text-xs text-neutral-400 font-mono">
+                                <div className="flex justify-between border-b border-white/5 pb-2">
+                                    <span>Primary Driver:</span>
+                                    <span className="text-cyan-400">Rates Volatility (MOVE Index)</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Regime Analogues:</span>
+                                    <span className="text-white">2018, 2015 (Aug)</span>
+                                </div>
+                            </div>
+                            <DisclaimerFooter />
+                        </Card>
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-6">
+                        <Card className="col-span-12 md:col-span-8">
+                            <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-6">Forward Probability of Stress (60 Days)</h3>
+                            <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={FORWARD_STRESS_DATA}>
+                                        <defs>
+                                            <linearGradient id="colorProb" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.3}/>
+                                                <stop offset="95%" stopColor="#fbbf24" stopOpacity={0}/>
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                                        <XAxis dataKey="day" stroke="#525252" fontSize={10} tickLine={false} axisLine={false} tickMargin={10} />
+                                        <YAxis stroke="#525252" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}%`} />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#0a0a0a', borderColor: '#262626', color: '#e5e5e5' }}
+                                            itemStyle={{ color: '#fbbf24' }}
+                                        />
+                                        <ReferenceLine y={50} stroke="#f43f5e" strokeDasharray="3 3" label={{ position: 'right', value: 'CRITICAL THRESHOLD', fill: '#f43f5e', fontSize: 10, fontWeight: 'bold' }} />
+                                        <Area type="monotone" dataKey="prob" stroke="#fbbf24" strokeWidth={2} fillOpacity={1} fill="url(#colorProb)" name="Stress Prob" />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </Card>
+
+                        <Card className="col-span-12 md:col-span-4">
+                            <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-6">Time-to-Stress Distribution</h3>
+                            <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={TIME_TO_STRESS_DIST} layout="vertical">
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#262626" horizontal={false} />
+                                        <XAxis type="number" stroke="#525252" fontSize={10} hide />
+                                        <YAxis dataKey="range" type="category" stroke="#a3a3a3" fontSize={10} width={60} tickLine={false} axisLine={false} />
+                                        <Tooltip cursor={{fill: '#171717'}} contentStyle={{ backgroundColor: '#0a0a0a', borderColor: '#262626', color: '#e5e5e5' }} />
+                                        <Bar dataKey="value" fill="#6366f1" radius={[0, 2, 2, 0]} barSize={16}>
+                                            {TIME_TO_STRESS_DIST.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={index === 1 || index === 2 ? '#f43f5e' : '#3f3f46'} />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-white/5 text-center text-xs text-neutral-500">
+                                Median Time to Transition: <span className="text-white font-mono text-lg ml-2">18 Days</span>
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            );
+        };
+
+        const HeatmapView = () => {
+            const regimes = ['Calm', 'Stress', 'Panic', 'Relief'];
+            
+            const getProb = (r1, r2) => {
+                const entry = HEATMAP_DATA.find(d => d.from === r1 && d.to === r2);
+                return entry ? entry : { prob: 0, reason: "N/A" };
+            };
+
+            return (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <SectionHeader 
+                        title="Regime Transition Heatmap" 
+                        subtitle="Transition Matrix: Current State (Rows) → Future State (Cols)"
+                    />
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2">
+                            <Card className="p-8 bg-black/40 overflow-visible border border-white/10">
+                                <div className="grid grid-cols-5 gap-3">
+                                    <div className="text-[10px] font-bold text-neutral-600 uppercase tracking-widest flex items-end justify-center pb-2">From \ To</div>
+                                    {regimes.map(r => (
+                                        <div key={r} className="text-center text-xs font-bold text-neutral-400 pb-2 border-b border-white/5 uppercase">{r}</div>
+                                    ))}
+
+                                    {regimes.map(from => (
+                                        <React.Fragment key={from}>
+                                            <div className="flex items-center justify-end pr-4 text-xs font-bold text-neutral-400 border-r border-white/5 uppercase">{from}</div>
+                                            {regimes.map(to => {
+                                                const data = getProb(from, to);
+                                                const intensity = data.prob;
+                                                let bgClass = 'bg-white/5';
+                                                let textClass = 'text-neutral-600';
+                                                let borderClass = 'border-transparent';
+                                                
+                                                if (intensity > 0.0) {
+                                                    if (intensity < 0.1) { bgClass = 'bg-neutral-900'; textClass = 'text-neutral-500'; }
+                                                    else if (intensity < 0.3) { bgClass = 'bg-indigo-950/30'; textClass = 'text-indigo-400'; borderClass = 'border-indigo-500/20'; }
+                                                    else if (intensity < 0.6) { bgClass = 'bg-amber-950/30'; textClass = 'text-amber-400'; borderClass = 'border-amber-500/20'; }
+                                                    else { bgClass = 'bg-rose-950/40'; textClass = 'text-rose-400 font-bold'; borderClass = 'border-rose-500/40 shadow-[0_0_15px_rgba(244,63,94,0.1)]'; }
+                                                }
+
+                                                return (
+                                                    <div 
+                                                        key={`${from}-${to}`} 
+                                                        className={`group relative h-24 w-full border ${borderClass} rounded-sm flex flex-col items-center justify-center transition-all hover:scale-105 hover:z-10 hover:shadow-2xl cursor-default ${bgClass}`}
+                                                    >
+                                                        <span className={`text-xl font-mono ${textClass}`}>{(data.prob * 100).toFixed(0)}%</span>
+                                                        <div className="absolute opacity-0 group-hover:opacity-100 transition-opacity bottom-full mb-2 w-72 bg-neutral-950 border border-violet-500/30 p-4 rounded shadow-2xl pointer-events-none z-50 backdrop-blur-xl">
+                                                            <div className="flex items-center gap-2 mb-2 border-b border-white/10 pb-2">
+                                                                <BrainCircuit size={12} className="text-violet-400"/>
+                                                                <span className="text-[10px] text-violet-300 uppercase font-bold tracking-wider">AI Rationale</span>
+                                                            </div>
+                                                            <p className="text-xs text-neutral-300 leading-relaxed font-light">"{data.reason}"</p>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </React.Fragment>
+                                    ))}
+                                </div>
+                            </Card>
+                        </div>
+
+                        <div className="lg:col-span-1 space-y-4">
+                            <Card className="p-6 border-l-2 border-l-rose-500 bg-gradient-to-br from-rose-950/10 to-transparent">
+                                <h3 className="text-white font-bold mb-2 flex items-center gap-2">
+                                    <AlertTriangle size={16} className="text-rose-500"/>
+                                    Elevated Risk
+                                </h3>
+                                <p className="text-xs text-neutral-400 mb-4 leading-relaxed">
+                                    Structurally significant probability (25%) of transitioning from <span className="text-amber-400 font-bold">Stress</span> to <span className="text-rose-500 font-bold">Panic</span> if volatility persists for &gt;10 days.
+                                </p>
+                                <div className="p-3 bg-black/40 rounded border border-white/10">
+                                    <div className="text-[10px] text-neutral-500 uppercase mb-1 tracking-widest">Key Macro Driver</div>
+                                    <div className="text-neutral-300 text-sm font-mono">Real Rates vs. Equity Earnings Yield Gap</div>
+                                </div>
+                            </Card>
+                            
+                            <Card className="p-6">
+                                <h3 className="text-neutral-300 font-bold mb-4 text-sm">Legend</h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-3 h-3 bg-neutral-900 border border-neutral-700 rounded-sm"></div>
+                                        <span className="text-xs text-neutral-500">Stable / Low Prob</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-3 h-3 bg-indigo-950/30 border border-indigo-500/30 rounded-sm"></div>
+                                        <span className="text-xs text-neutral-500">Moderate Transition</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-3 h-3 bg-rose-950/40 border border-rose-500/50 rounded-sm shadow-[0_0_8px_rgba(244,63,94,0.3)]"></div>
+                                        <span className="text-xs text-neutral-300 font-medium">High Conviction Shift</span>
+                                    </div>
+                                </div>
+                            </Card>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ScenariosView = () => {
+            const [selectedScenario, setSelectedScenario] = useState('base');
+
+            return (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <SectionHeader 
+                        title="Scenario & Stress Testing" 
+                        subtitle="Regime-Conditioned VaR & AI-Generated Narratives"
+                    />
+
+                    <div className="grid grid-cols-12 gap-6">
+                        <div className="col-span-12 lg:col-span-8 space-y-6">
+                            <Card className="p-6">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Projected Drawdown Distribution</h3>
+                                    <div className="flex gap-1 bg-black p-1 rounded border border-white/10">
+                                        <button 
+                                            onClick={() => setSelectedScenario('base')}
+                                            className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded transition-all ${selectedScenario === 'base' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-600 hover:text-neutral-300'}`}
+                                        >
+                                            No Regime Change
+                                        </button>
+                                        <button 
+                                            onClick={() => setSelectedScenario('stress')}
+                                            className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded transition-all ${selectedScenario === 'stress' ? 'bg-rose-900/50 text-rose-200 border border-rose-500/20 shadow-sm' : 'text-neutral-600 hover:text-neutral-300'}`}
+                                        >
+                                            Transition to Stress
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div className="h-72 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={VAR_COMPARISON_DATA} layout="vertical">
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#262626" horizontal={false}/>
+                                            <XAxis type="number" stroke="#525252" fontSize={10} tickFormatter={(val) => `${val}%`} />
+                                            <YAxis dataKey="metric" type="category" stroke="#a3a3a3" fontSize={11} width={100} tickLine={false} axisLine={false} />
+                                            <Tooltip 
+                                                cursor={{fill: '#171717'}} 
+                                                contentStyle={{ backgroundColor: '#0a0a0a', borderColor: '#262626', color: '#e5e5e5' }}
+                                                formatter={(value) => [`${value}%`, 'Value']}
+                                            />
+                                            <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} />
+                                            <Bar 
+                                                dataKey="current" 
+                                                name="Current Regime Assumption" 
+                                                fill="#525252" 
+                                                radius={[0, 2, 2, 0]} 
+                                                barSize={12} 
+                                                fillOpacity={selectedScenario === 'stress' ? 0.3 : 1}
+                                            />
+                                            <Bar 
+                                                dataKey="stress" 
+                                                name="Stress Regime Assumption" 
+                                                fill="#f43f5e" 
+                                                radius={[0, 2, 2, 0]} 
+                                                barSize={12}
+                                                fillOpacity={selectedScenario === 'base' ? 0.3 : 1}
+                                            />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </Card>
+                        </div>
+
+                        <div className="col-span-12 lg:col-span-4">
+                            <Card className="p-6 h-full flex flex-col border-t-2 border-t-violet-500 bg-gradient-to-b from-neutral-900/50 to-transparent">
+                                <GenAIBadge />
+                                <h3 className="text-lg font-bold text-white mb-6">Risk Committee Narrative</h3>
+                                
+                                <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+                                    <div className="bg-black/40 p-5 rounded border border-white/5 relative">
+                                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500 rounded-l"></div>
+                                        <p className="text-xs text-neutral-300 leading-relaxed font-light">
+                                            <span className="font-bold text-violet-400 block mb-2 text-[10px] uppercase tracking-widest">Observation</span>
+                                            "Traditional risk metrics (VaR 99) assume regime persistence and are understating tail risk by approximately <span className="text-white font-mono bg-white/10 px-1 rounded">3.2x</span> compared to the regime-conditioned model."
+                                        </p>
+                                    </div>
+                                    
+                                    <div className="bg-black/40 p-5 rounded border border-white/5 relative">
+                                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-500 rounded-l"></div>
+                                        <p className="text-xs text-neutral-300 leading-relaxed font-light">
+                                            <span className="font-bold text-amber-400 block mb-2 text-[10px] uppercase tracking-widest">Recommendation</span>
+                                            "Given the elevated transition probability shown in the Early Warning module, it is recommended to stress-test the portfolio against the <span className="text-amber-400 border-b border-dashed border-amber-500/50">2022 Inflation Shock</span> scenario rather than the standard rolling 2-year window."
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <DisclaimerFooter />
+                            </Card>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AuditView = () => {
+            const logs = [
+                { time: '10:42 AM', type: 'System', text: 'Regime Transition Probability (Calm → Stress) crossed 15% threshold.', status: 'Alert' },
+                { time: '10:45 AM', type: 'GenAI', text: 'Generated explanatory narrative citing "Repo Rate Divergence".', status: 'Info' },
+                { time: '11:15 AM', type: 'Human', text: 'Risk Committee acknowledged Alert #442.', status: 'Action' },
+                { time: '11:20 AM', type: 'Human', text: 'Value-at-Risk limits temporarily tightened by 10bps.', status: 'Decision' },
+            ];
+
+            return (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <SectionHeader 
+                        title="Governance & Decision Log" 
+                        subtitle="Immutable Audit Trail of Model Outputs & Human Decisions"
+                    />
+                    
+                    <Card className="overflow-hidden border border-white/5">
+                        <div className="w-full text-left">
+                            <div className="bg-white/5 px-6 py-4 border-b border-white/5 grid grid-cols-12 text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                <div className="col-span-2">Timestamp</div>
+                                <div className="col-span-2">Actor</div>
+                                <div className="col-span-6">Event Detail</div>
+                                <div className="col-span-2 text-right">Status</div>
+                            </div>
+                            <div className="divide-y divide-white/5">
+                                {logs.map((log, i) => (
+                                    <div key={i} className="grid grid-cols-12 px-6 py-4 text-xs hover:bg-white/5 transition-colors items-center group">
+                                        <div className="col-span-2 text-neutral-500 font-mono text-[10px] group-hover:text-neutral-300">{log.time}</div>
+                                        <div className="col-span-2 flex items-center gap-2">
+                                            {log.type === 'GenAI' && <BrainCircuit size={14} className="text-violet-400" />}
+                                            {log.type === 'Human' && <User size={14} className="text-emerald-400" />}
+                                            {log.type === 'System' && <Activity size={14} className="text-amber-400" />}
+                                            <span className={`font-bold ${log.type === 'GenAI' ? 'text-violet-300' : 'text-neutral-300'}`}>{log.type}</span>
+                                        </div>
+                                        <div className="col-span-6 text-neutral-400 font-light">{log.text}</div>
+                                        <div className="col-span-2 text-right">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
+                                                ${log.status === 'Alert' ? 'bg-amber-900/30 text-amber-200 border border-amber-500/20' : ''}
+                                                ${log.status === 'Info' ? 'bg-neutral-800 text-neutral-400 border border-neutral-700' : ''}
+                                                ${log.status === 'Action' ? 'bg-emerald-900/30 text-emerald-200 border border-emerald-500/20' : ''}
+                                                ${log.status === 'Decision' ? 'bg-rose-900/30 text-rose-200 border border-rose-500/20' : ''}
+                                            `}>
+                                                {log.status}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </Card>
+                    
+                    <div className="flex justify-center mt-8">
+                        <div className="text-center max-w-lg opacity-50 hover:opacity-100 transition-opacity">
+                            <h4 className="text-neutral-500 text-[10px] font-bold uppercase mb-2 tracking-widest">Regulatory Disclaimer</h4>
+                            <p className="text-neutral-600 text-[10px] leading-relaxed font-mono">
+                                AI provides decision support only; final authority remains with risk committees. 
+                                Model outputs are probabilistic estimates based on historical data. 
+                                Past performance of regime transitions is not indicative of future results.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main Layout ---
+
+        const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
+            <button 
+                onClick={onClick}
+                className={`w-full flex items-center gap-3 px-6 py-4 text-xs font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer
+                    ${active 
+                        ? 'text-cyan-400 bg-white/5 border-r-2 border-cyan-500' 
+                        : 'text-neutral-500 hover:text-neutral-200 hover:bg-white/5 border-r-2 border-transparent'
+                    }`}
+            >
+                <Icon size={16} className={active ? "animate-pulse" : ""} />
+                {label}
+            </button>
+        );
+
+        const App = () => {
+            const [showLanding, setShowLanding] = useState(true);
+            const [activeView, setActiveView] = useState('dashboard');
+            const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+            const handleLogout = () => {
+                setIsProfileOpen(false);
+                setShowLanding(true);
+            };
+
+            if (showLanding) {
+                return <LandingPage onEnter={() => setShowLanding(false)} />;
+            }
+
+            return (
+                <div className="flex h-screen bg-[#050505] text-white font-sans overflow-hidden selection:bg-cyan-500/30 relative">
+                    <CustomCursor />
+                    
+                    {isProfileOpen && <ProfileModal onClose={() => setIsProfileOpen(false)} onLogout={handleLogout} />}
+                    
+                    {/* Global CRT Scanline Overlay */}
+                    <div className="absolute inset-0 z-50 pointer-events-none opacity-10 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,3px_100%]"></div>
+
+                    {/* Sidebar */}
+                    <div className="w-64 bg-black border-r border-white/5 flex flex-col shrink-0 z-20">
+                        <div 
+                            className="p-8 border-b border-white/5 relative overflow-hidden cursor-pointer group"
+                            onClick={() => setShowLanding(true)}
+                        >
+                            <div className="absolute inset-0 bg-cyan-500/5 animate-pulse group-hover:bg-cyan-500/10 transition-colors"></div>
+                            <div className="flex items-center gap-3 text-white font-black text-2xl tracking-tighter relative z-10">
+                                <div className="relative">
+                                    <ShieldAlert size={28} className="text-white group-hover:text-cyan-400 transition-colors" />
+                                    <div className="absolute inset-0 bg-cyan-500 blur-lg opacity-20"></div>
+                                </div>
+                                <span>RISK<span className="text-cyan-500">SENTRY</span></span>
+                            </div>
+                            <div className="mt-2 text-[9px] text-neutral-500 uppercase tracking-[0.2em] font-bold ml-1 relative z-10">Early Warning System</div>
+                        </div>
+
+                        <nav className="flex-1 py-8 space-y-1">
+                            <div className="px-6 mb-3 text-[10px] font-bold text-neutral-600 uppercase tracking-[0.2em]">Monitoring</div>
+                            <SidebarItem 
+                                icon={LayoutDashboard} 
+                                label="Executive Overview" 
+                                active={activeView === 'dashboard'} 
+                                onClick={() => setActiveView('dashboard')} 
+                            />
+                            <SidebarItem 
+                                icon={Radar} 
+                                label="Transition Heatmap" 
+                                active={activeView === 'heatmap'} 
+                                onClick={() => setActiveView('heatmap')} 
+                            />
+                            <SidebarItem 
+                                icon={AlertTriangle} 
+                                label="Early Warning Panel" 
+                                active={activeView === 'earlyWarning'} 
+                                onClick={() => setActiveView('earlyWarning')} 
+                            />
+                            
+                            <div className="px-6 mt-10 mb-3 text-[10px] font-bold text-neutral-600 uppercase tracking-[0.2em]">Analysis</div>
+                            <SidebarItem 
+                                icon={TrendingUp} 
+                                label="Stress Scenarios" 
+                                active={activeView === 'scenarios'} 
+                                onClick={() => setActiveView('scenarios')} 
+                            />
+                            
+                            <div className="px-6 mt-10 mb-3 text-[10px] font-bold text-neutral-600 uppercase tracking-[0.2em]">Governance</div>
+                            <SidebarItem 
+                                icon={FileText} 
+                                label="Decision Log" 
+                                active={activeView === 'audit'} 
+                                onClick={() => setActiveView('audit')} 
+                            />
+                        </nav>
+
+                        <div 
+                            className="p-6 border-t border-white/5 bg-neutral-900/20 cursor-pointer hover:bg-white/5 transition-colors"
+                            onClick={() => setIsProfileOpen(true)}
+                        >
+                            <div className="flex items-center gap-3 px-2">
+                                <div className="w-8 h-8 rounded bg-neutral-800 flex items-center justify-center border border-white/10">
+                                    <User size={14} className="text-neutral-400" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-bold text-white truncate">Risk Committee</p>
+                                    <p className="text-[10px] text-neutral-500 truncate uppercase tracking-wider">Read-Only</p>
+                                </div>
+                                <Lock size={12} className="text-neutral-600" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+                        {/* Header */}
+                        <header className="h-20 bg-black/50 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-8 shrink-0 z-10">
+                            <div className="flex items-center gap-6">
+                                <span className="text-neutral-500 text-xs font-mono">PORTFOLIO: <span className="text-white font-bold ml-1">GLB-MACRO-ALPHA-1</span></span>
+                                <span className="h-4 w-px bg-white/10"></span>
+                                <span className="text-neutral-500 text-xs font-mono flex items-center gap-2">
+                                    STATUS: 
+                                    <span className="text-emerald-500 font-bold flex items-center gap-1.5 bg-emerald-900/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                        <div className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></div> ONLINE
+                                    </span>
+                                </span>
+                            </div>
+                            <div className="text-[10px] text-neutral-600 font-mono flex gap-4">
+                                <span>LATENCY: 12ms</span>
+                                <span>|</span>
+                                <span>{new Date().toLocaleDateString()} • {new Date().toLocaleTimeString()} UTC</span>
+                            </div>
+                        </header>
+
+                        {/* Scrollable Area */}
+                        <main className="flex-1 overflow-y-auto p-8 bg-[#050505] scrollbar-thin scrollbar-thumb-neutral-800 scrollbar-track-transparent">
+                            <div className="max-w-7xl mx-auto">
+                                {activeView === 'dashboard' && <DashboardView />}
+                                {activeView === 'heatmap' && <HeatmapView />}
+                                {activeView === 'earlyWarning' && <EarlyWarningView />}
+                                {activeView === 'scenarios' && <ScenariosView />}
+                                {activeView === 'audit' && <AuditView />}
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
